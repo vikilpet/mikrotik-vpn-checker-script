@@ -1,0 +1,121 @@
+# VPN CHECKER
+# 2018-05-12_20-07-50
+# https://vikilpet.wordpress.com    https://vikilpet.wordpress.com/
+
+# ++++++++++++++++++++++++++++++ SETTINGS ++++++++++++++++++++++++++++++
+	# Name of this script in /system scripts
+	:local ScriptName "VPN_CHECKER";
+	# VPN interface name mask:
+	:local IntMask "VPN.*";
+	# Hosts to ping:
+	:local Hosts ("www.google.com", "fb.com", "8.8.8.8", "9.9.9.9");
+	# How many times to ping every host:
+	:local PingCount 3;
+	# Percent for successful ping:
+	:local PingResult 80;
+	# Pause between disable-enable interface:
+	:local RecDelay 5s;
+	# How long to wait for connection:
+	:local RecWaitDelay 20s;
+	# Error threshold:
+	:local ErrTresh 100;
+#------------------------------------------------------------ SETTINGS ------------------------------------------------------------
+
+:local Host "";
+:local HostsCount 0;
+:local Int "";
+:local Result 0;
+:local Success 0;
+:local PingRes 0;
+:local FailedHosts "";
+:local IntName "";
+:local FailDetect 0;
+:global VPNErrors;
+
+# Do not run this script twice:
+if ([/system script job find script=$ScriptName]~";"=false) do={
+
+	:log info "SCRIPT $ScriptName STARTED";
+
+	# Calculate quantity of hosts:
+	:foreach Host in=$Hosts do={set HostsCount ($HostsCount + 1)};
+	
+	# Calculate successful ping quantity:
+	:set Success ($HostsCount * $PingCount * $PingResult / 100);
+	
+	:foreach Int in=[/interface find name~"$IntMask" and disabled=no] do={
+		:set IntName [/interface get $Int name];
+		:set FailedHosts "";
+		:set Result 0;
+		:set FailDetect 0;
+		:if ([/interface get $Int running]) do={
+			:foreach Host in=$Hosts do={
+				:set PingRes [ping address=$Host interface=$Int count=$PingCount];
+				:set Result ($Result + $PingRes);
+				:if ($PingRes=0) do={:set FailedHosts ($FailedHosts . $Host . ", ");};
+			}
+			:if ($Result < $Success) do={
+				:if ($Result = 0) do={
+					# The tunnel doesn't work at all
+					:log info "THE TUNNEL $IntName DOES NOT WORK AT ALL. LET'S RECONNECT HIM...";
+					/interface set $Int disabled=yes;
+					:delay $RecDelay;
+					/interface set $Int disabled=no;
+					:delay $RecWaitDelay;
+					:if ([/interface get $Int running]) do={
+						:set Result 0;
+						:foreach Host in=$Hosts do={
+							:set Result ($Result+ [ping address=$Host interface=$Int count=$PingCount]);
+						}
+						:if ($Result < $Success) do={
+							:set FailDetect ($FailDetect + 1);
+							# /system script run SOUND_WARNING
+							:log info "    DOES NOT WORK EVEN AFTER RECONNECTION. DISABLE IT.";
+							/ip route set disabled=yes [find gateway=$IntName and static=yes and disabled=no]
+						} else={
+							:log info "    NOW $IntName IS WORKING (PING RESULT: $Result OF $($HostsCount * $PingCount)). ENABLE IT.";
+							/ip route set disabled=no [find gateway=$IntName and static=yes and disabled=yes]
+						}
+					} else={:set FailDetect ($FailDetect + 1);}
+				} else={
+					# /system script run SOUND_WARNING
+					:log info "THE TUNNEL $IntName DOES NOT WORKING PROPERLY (PING RESULT: $Result OF $($HostsCount * $PingCount)). DISABLE IT.";
+					:if ([len $FailedHosts]>0) do={
+						# Remove last comma:
+						:log info "    FAILED HOSTS: $([:pick $FailedHosts 0 ([len $FailedHosts]-2)])";
+					}
+					:set FailDetect ($FailDetect + 1);
+					/ip route set disabled=yes [find gateway=$IntName and static=yes and disabled=no]
+				}			
+			} else={
+				# Ping result is OK
+				:if ([len $FailedHosts]>0) do={
+					# Remove last comma:
+					:log info "THE TUNNEL $IntName IS OK BUT THESE HOSTS ARE FAILED: $([:pick $FailedHosts 0 ([len $FailedHosts]-2)])";
+					:set FailDetect ($FailDetect + 1);
+				} else={
+					:log info "THE TUNNEL $IntName IS OK (PING RESULT: $Result OF $($HostsCount * $PingCount))";
+				}
+				/ip route set disabled=no [find gateway=$IntName and static=yes and disabled=yes]
+			}
+		} else={
+			# Interface is not working
+			:set FailDetect ($FailDetect + 1);
+			/ip route set disabled=yes [find gateway=$IntName and static=yes and disabled=no]
+		}
+	}
+	:if ($FailDetect > 0) do={:set VPNErrors ($VPNErrors + 1);} else={:set VPNErrors 0;}
+	:if ($VPNErrors > $ErrTresh) do={
+		/system script run SOUND_WARNING
+		/system script run SOUND_WARNING
+		/system script run SOUND_WARNING
+		/system script run SOUND_WARNING
+		/system script run SOUND_WARNING
+		/system script run SOUND_WARNING
+		:log warning "SOMETHING GOES WRONG FOR THE $VPNErrors TIME";
+		:set VPNErrors 0;
+	}
+	:log info "SCRIPT $ScriptName FINISHED";
+} else={
+	:log info "DO NOT RUN $ScriptName TWICE";
+}
