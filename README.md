@@ -1,3 +1,8 @@
+**This script is obsolete. The new script is better than this one in every way**:
+
+https://github.com/vikilpet/mikrotik-interface-check
+
+
 # Mikrotik VPN Checker
 
 ### Features
